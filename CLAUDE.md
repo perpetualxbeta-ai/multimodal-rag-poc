@@ -55,24 +55,29 @@ src/
   store.py         # VectorStoreManager: Qdrant collection, index_chunks(), search()              [done]
   retriever.py     # Retriever, RetrievedContext/ContextItem, KeywordReranker, CrossEncoderReranker [done]
   generator.py     # MultimodalGenerator (litellm vision prompts), GenerationResult, TokenUsage     [done]
-  pipeline.py      # ingest() / query() orchestration                                             [planned]
-  config.py        # pydantic-settings; loads .env + config.yaml                                  [planned]
-  logging_setup.py # central logging config                                                       [planned]
-  cli.py           # `python -m src.cli ingest|query`                                             [planned]
+  pipeline.py      # RAGPipeline: build components from Settings, ingest(), query()               [done]
+  config.py        # Settings: config.yaml + MMRAG_* env + .env (pydantic-settings)              [done]
+  logging_setup.py # setup_logging(): central logging config, quiets litellm/httpx               [done]
+app.py             # CLI: --ingest PATH... / --query "..." / --reset / --model / --json          [done]
 tests/
   test_store.py    # embedder + store tests with fake embedders and in-memory Qdrant
   test_extractor.py # builds a sample PDF on the fly (text, table, raster + vector figures)
   test_rag.py      # retriever + generator; litellm faked or run with mock_response (no network)
+  test_pipeline.py # extraction units, mock retrieval, config, on-disk persistence, app.py CLI
 samples/
   halcyon_fy2025_report.pdf # fictional 5-page report: text, 2 tables, raster + vector charts, diagram
 scripts/
   make_sample_pdf.py        # regenerates the sample PDF (reportlab + matplotlib)
 data/raw/          # input PDFs (gitignored)
 data/processed/    # rendered images, caches (gitignored)
-requirements.txt
+requirements.txt        # core deps for the default Gemini setup (no torch)
+requirements-local.txt  # + sentence-transformers, torch, unstructured (local models)
+requirements-dev.txt    # + pytest, mypy, ruff, sample-PDF generator deps
 pytest.ini         # asyncio_mode = auto
-config.yaml        # planned
-.env.example       # planned
+mypy.ini           # strict; pydantic plugin; pymupdf untyped calls allowed
+config.yaml        # all model names and settings (override with MMRAG_* env vars)
+.env.example       # GEMINI_API_KEY, OPENAI_API_KEY, MMRAG_* examples
+README.md          # user-facing quickstart and docs
 ```
 
 Keep new modules flat in `src/` unless one grows past roughly 400 lines; then split it into a subpackage and update this section.
@@ -85,6 +90,8 @@ Keep new modules flat in `src/` unless one grows past roughly 400 lines; then sp
 - `VectorStoreManager` (`src/store.py`): `in_memory()`, `from_url()`, `async index_chunks(chunks)`, `async search(query_text, top_k=5, chunk_types=..., page_numbers=...)`.
 - `Retriever(store, top_k, max_images, max_context_chars, reranker)` → `async retrieve(query) -> RetrievedContext` (`.text_items`, `.image_items`, `.image_paths`, `.text_block()`).
 - `MultimodalGenerator(model, fallback_models=...)` → `async generate(question, context) -> GenerationResult` (`.answer`, `.citations`, `.usage`, `.cost_usd`, `.llm_latency_ms`, `.end_to_end_latency_ms`). `build_messages()` exposes the exact prompt for debugging.
+- `load_settings(config_path)` → `Settings`; `RAGPipeline.from_settings(settings, embedder=..., generator=...)` → `async ingest(paths, reset=False) -> list[IngestReport]`, `async query(question) -> QueryResult`. Pass `embedder`/`generator` to inject fakes. `PipelineError` carries user-facing messages (empty index, embedding mismatch → suggests `--reset`).
+- `app.build_pipeline` is the CLI's factory; tests monkeypatch it (plus `app.missing_api_keys`, `app.setup_logging`).
 
 ## LLM Router (`litellm`)
 
@@ -119,7 +126,8 @@ All LLM and embedding API calls go through `litellm` (`src/embedder.py` for capt
 - **Vector storage:** `qdrant-client` (in-memory, local path, or Docker)
 - **Embeddings:** `sentence-transformers`, `torch`, `pillow`
 - **LLM integration:** `litellm`
-- **Support:** `pytest`, `pytest-asyncio`, `ruff`, `mypy`; planned: `pydantic-settings`, `python-dotenv`, `typer` (CLI)
+- **Config/CLI:** `pydantic-settings`, `pyyaml`, `python-dotenv`, stdlib `argparse`
+- **Support:** `pytest`, `pytest-asyncio`, `ruff`, `mypy`
 
 ## Apple Silicon (macOS, M-series)
 
@@ -142,20 +150,22 @@ All LLM and embedding API calls go through `litellm` (`src/embedder.py` for capt
 
 ```bash
 # setup
-python3.11 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt     # or requirements.txt (core) / requirements-local.txt (torch)
 cp .env.example .env   # then add GEMINI_API_KEY
 
 # run
 # extract a PDF and print a summary of its chunks
 python -m src.extractor samples/halcyon_fy2025_report.pdf
 
-# (planned CLI)
-python -m src.cli ingest data/raw/sample.pdf
-python -m src.cli query "What does Figure 3 show about latency?" --llm gemini
+# full pipeline
+python app.py --ingest samples/halcyon_fy2025_report.pdf
+python app.py --query "What is the Q3 revenue trend shown in the chart?"
+python app.py --query "..." --model ollama/llama3.2-vision --json
 
 # quality
-ruff format --line-length 110 src tests && ruff check --line-length 110 src tests && mypy --strict --ignore-missing-imports src && pytest -q
+ruff format --line-length 110 src tests app.py && ruff check --line-length 110 src tests app.py && python -m mypy && pytest -q
+# run mypy as `python -m mypy` so it sees the project's installed packages (pydantic plugin, pymupdf)
 ```
 
 ## Working Rules for Claude
@@ -164,4 +174,5 @@ ruff format --line-length 110 src tests && ruff check --line-length 110 src test
 - Do not hard-code model names, embedding dimensions, file paths or API keys.
 - Keep each change small and runnable. Update the tests and this file's layout section whenever you add a module.
 - Do not commit anything under `data/`, `.env`, model caches or Qdrant storage.
-- When adding a dependency, add it to `requirements.txt` with a lower-bound version and say why in the PR or commit message.
+- Keep `README.md` in sync with user-facing changes (CLI flags, config keys, env vars, model names).
+- When adding a dependency, add it to the right requirements file (`requirements.txt` core, `-local` for torch-based, `-dev` for tooling) with a lower-bound version and say why in the PR or commit message.

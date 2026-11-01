@@ -135,14 +135,18 @@ def extract_pdf(pdf_path: str | Path, config: ExtractorConfig | None = None) -> 
 
         unstructured_tables: dict[int, list[_Table]] = {}
         if cfg.extract_tables and cfg.table_backend == "unstructured":
-            sizes = {pg.number + 1: (float(pg.rect.width), float(pg.rect.height)) for pg in doc}
+            sizes = {
+                pg.number + 1: (float(pg.rect.width), float(pg.rect.height))
+                for pg in (doc.load_page(i) for i in range(doc.page_count))
+            }
             unstructured_tables = _unstructured_tables(path, sizes)
 
         image_dir = Path(cfg.output_dir) / doc_id
         base_meta: dict[str, Any] = {"doc_id": doc_id, "source_path": str(path)}
         chunks: list[Chunk] = []
-        for page in doc:
-            page_number = page.number + 1
+        for page_index in range(doc.page_count):
+            page = doc.load_page(page_index)
+            page_number = page_index + 1
             try:
                 if cfg.table_backend == "unstructured":
                     tables = unstructured_tables.get(page_number, [])

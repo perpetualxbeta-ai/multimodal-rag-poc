@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .embedder import is_retryable
 from .retriever import ContextItem, RetrievedContext
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,6 @@ or guess.
 - Be concise: answer first, then any brief supporting detail."""
 
 _CITATION_RE = re.compile(r"\[(S\d+(?:\s*,\s*S\d+)*)\]")
-_RETRYABLE_HINTS = ("rate", "429", "quota", "timeout", "temporarily", "overloaded", "503", "502", "500")
 
 
 @dataclass(slots=True, frozen=True)
@@ -238,7 +238,7 @@ class MultimodalGenerator:
                 except Exception as exc:  # noqa: BLE001 - provider errors vary; classified below
                     message = f"{model} attempt {attempt}: {type(exc).__name__}: {str(exc)[:200]}"
                     errors.append(message)
-                    retryable = any(h in str(exc).lower() for h in _RETRYABLE_HINTS)
+                    retryable = is_retryable(exc)
                     if retryable and attempt < self.max_retries:
                         delay = 2.0 * 2 ** (attempt - 1)
                         logger.warning("%s; retrying in %.0fs", message, delay)

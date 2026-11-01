@@ -266,3 +266,11 @@ def test_vision_detection() -> None:
     assert gen_module._supports_vision("gemini/gemini-2.5-flash") is True
     assert gen_module._supports_vision("some-provider/brand-new-model") is True  # unknown: assume yes
     assert MultimodalGenerator("m", send_images=False).send_images is False
+
+
+def test_retryable_classification() -> None:
+    from src.embedder import is_retryable
+
+    assert is_retryable(RuntimeError("429 Resource exhausted: rate limit"))
+    assert is_retryable(TimeoutError("request timed out"))
+    assert not is_retryable(ValueError("403 Forbidden: API key not valid"))

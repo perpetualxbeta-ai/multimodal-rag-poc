@@ -1,0 +1,9 @@
+# Tests, linting, and the sample-PDF generator script.
+-r requirements.txt
+pytest>=8.0
+pytest-asyncio>=0.24
+mypy>=1.11
+ruff>=0.6
+types-Pillow
+reportlab>=4.0    # scripts/make_sample_pdf.py
+matplotlib>=3.8   # scripts/make_sample_pdf.py

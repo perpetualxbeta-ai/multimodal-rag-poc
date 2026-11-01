@@ -1,0 +1,6 @@
+# Optional: local models (MiniLM text embeddings, CLIP image embeddings, cross-encoder re-ranking)
+# and the unstructured table backend. Large download (torch).
+-r requirements.txt
+sentence-transformers>=3.0
+torch>=2.3
+unstructured[pdf]>=0.16   # only for extraction.table_backend: unstructured (needs poppler + tesseract)

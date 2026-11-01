@@ -319,8 +319,9 @@ class VisionSummarizer:
         async def one(path: str, context: str | None) -> str | None:
             try:
                 return await self.summarize(path, context)
-            except Exception:
-                logger.warning("Vision summary failed for %s", path, exc_info=True)
+            except Exception as exc:
+                logger.warning("Vision summary failed for %s: %s", Path(path).name, str(exc)[:200])
+                logger.debug("Vision summary failure details", exc_info=True)
                 return None
 
         return list(await asyncio.gather(*(one(p, c) for p, c in zip(image_paths, ctx, strict=True))))
@@ -469,13 +470,33 @@ class MultimodalEmbedder:
         return out
 
 
+_RETRYABLE_HINTS = (
+    "rate",
+    "429",
+    "quota",
+    "timeout",
+    "timed out",
+    "temporarily",
+    "overloaded",
+    "500",
+    "502",
+    "503",
+)
+
+
+def is_retryable(exc: BaseException) -> bool:
+    """True for transient provider errors (rate limits, timeouts, 5xx); False for auth or bad requests."""
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(h in text for h in _RETRYABLE_HINTS)
+
+
 async def _with_retries(call: Any, attempts: int, what: str, base_delay: float = 2.0) -> Any:
     """Await ``call()`` with exponential backoff (handles rate limits such as Gemini free-tier 429s)."""
     for attempt in range(1, attempts + 1):
         try:
             return await call()
         except Exception as exc:
-            if attempt == attempts:
+            if attempt == attempts or not is_retryable(exc):
                 raise
             delay = base_delay * 2 ** (attempt - 1)
             logger.warning("%s failed (%s); retry %d/%d in %.0fs", what, exc, attempt, attempts - 1, delay)

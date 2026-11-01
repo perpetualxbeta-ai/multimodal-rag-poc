@@ -1,17 +1,10 @@
-pypdf>=5.0
+# Core: everything needed for the default Gemini setup (no torch, no system packages).
 pymupdf>=1.24
-unstructured[pdf]>=0.16
-qdrant-client>=1.12
-sentence-transformers>=3.0
-torch>=2.3
+pypdf>=5.0
 pillow>=10.0
+qdrant-client>=1.12
 litellm>=1.50
-
-# dev
-pytest>=8.0
-pytest-asyncio>=0.24
-mypy>=1.11
-ruff>=0.6
-types-Pillow
-reportlab>=4.0   # scripts/make_sample_pdf.py only
-matplotlib>=3.8  # scripts/make_sample_pdf.py only
+pydantic>=2.6
+pydantic-settings>=2.3   # config.yaml + env overrides
+pyyaml>=6.0              # config.yaml
+python-dotenv>=1.0       # .env for API keys

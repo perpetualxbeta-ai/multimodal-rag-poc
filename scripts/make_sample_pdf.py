@@ -35,7 +35,9 @@ COMPANY = "Halcyon Grid Energy"
 
 styles = getSampleStyleSheet()
 body = ParagraphStyle("body", parent=styles["BodyText"], fontSize=10, leading=14, spaceAfter=8)
-caption = ParagraphStyle("caption", parent=body, fontSize=9, textColor=colors.HexColor("#444444"), alignment=TA_CENTER)
+caption = ParagraphStyle(
+    "caption", parent=body, fontSize=9, textColor=colors.HexColor("#444444"), alignment=TA_CENTER
+)
 h1 = styles["Heading1"]
 h2 = styles["Heading2"]
 
@@ -63,8 +65,13 @@ gen_chart = png(fig)
 
 mix = {"Solar": 58, "Wind": 27, "Battery discharge": 11, "Hydro": 4}
 fig, ax = plt.subplots(figsize=(4.2, 3.4))
-ax.pie(mix.values(), labels=mix.keys(), autopct="%1.0f%%", startangle=90,
-       colors=["#f2b134", "#4f9dde", "#6cc070", "#2a6f97"])
+ax.pie(
+    mix.values(),
+    labels=mix.keys(),
+    autopct="%1.0f%%",
+    startangle=90,
+    colors=["#f2b134", "#4f9dde", "#6cc070", "#2a6f97"],
+)
 ax.set_title("FY2025 generation mix")
 mix_chart = png(fig)
 
@@ -89,18 +96,28 @@ bar.add(String(15 * cm - 63, 7 * cm - 17, "2025", fontSize=8))
 
 # --- vector diagram: energy flow -------------------------------------------------------------
 flow = Drawing(16 * cm, 4 * cm)
-steps = [("Solar & wind\nfarms", "#f2b134"), ("Inverters &\nsubstations", "#4f9dde"),
-         ("Battery\nstorage", "#6cc070"), ("Regional\ngrid", "#2a6f97")]
+steps = [
+    ("Solar & wind\nfarms", "#f2b134"),
+    ("Inverters &\nsubstations", "#4f9dde"),
+    ("Battery\nstorage", "#6cc070"),
+    ("Regional\ngrid", "#2a6f97"),
+]
 box_w, box_h, gap = 3.1 * cm, 2.0 * cm, 0.9 * cm
 for i, (label, colour) in enumerate(steps):
     x = 0.2 * cm + i * (box_w + gap)
-    flow.add(Rect(x, 1 * cm, box_w, box_h, rx=6, ry=6, fillColor=colors.HexColor(colour), strokeColor=colors.black))
+    flow.add(
+        Rect(x, 1 * cm, box_w, box_h, rx=6, ry=6, fillColor=colors.HexColor(colour), strokeColor=colors.black)
+    )
     for j, line in enumerate(label.split("\n")):
-        flow.add(String(x + box_w / 2, 1 * cm + box_h / 2 + 3 - j * 11, line, fontSize=9, textAnchor="middle"))
+        flow.add(
+            String(x + box_w / 2, 1 * cm + box_h / 2 + 3 - j * 11, line, fontSize=9, textAnchor="middle")
+        )
     if i < len(steps) - 1:
         ax0, ax1, ay = x + box_w + 3, x + box_w + gap - 3, 1 * cm + box_h / 2
         flow.add(Line(ax0, ay, ax1 - 6, ay, strokeWidth=1.5))
-        flow.add(Polygon([ax1, ay, ax1 - 7, ay + 4, ax1 - 7, ay - 4], fillColor=colors.black, strokeColor=None))
+        flow.add(
+            Polygon([ax1, ay, ax1 - 7, ay + 4, ax1 - 7, ay - 4], fillColor=colors.black, strokeColor=None)
+        )
 
 # --- tables -----------------------------------------------------------------------------------
 rev = [42.1, 47.8, 55.3, 61.0]
@@ -124,15 +141,19 @@ site_rows = [
 
 def grid_table(rows: list[list[str]], widths: list[float]) -> Table:
     t = Table(rows, colWidths=widths)
-    t.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e9edf1")),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
+    t.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e9edf1")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
     return t
 
 
@@ -147,7 +168,9 @@ def on_page(canvas, doc) -> None:
     canvas.saveState()
     canvas.drawImage(logo, A4[0] - 2.4 * cm, A4[1] - 1.6 * cm, width=0.8 * cm, height=0.8 * cm, mask="auto")
     canvas.setFont("Helvetica", 8)
-    canvas.drawString(2 * cm, A4[1] - 1.3 * cm, f"{COMPANY} - FY2025 Annual Operations Report (fictional sample)")
+    canvas.drawString(
+        2 * cm, A4[1] - 1.3 * cm, f"{COMPANY} - FY2025 Annual Operations Report (fictional sample)"
+    )
     canvas.drawRightString(A4[0] - 2 * cm, 1.2 * cm, f"Page {doc.page}")
     canvas.restoreState()
 
@@ -155,82 +178,130 @@ def on_page(canvas, doc) -> None:
 P = lambda text: Paragraph(text, body)  # noqa: E731
 story = [
     Paragraph(f"{COMPANY}<br/>FY2025 Annual Operations Report", styles["Title"]),
-    Paragraph("This is a fictional document generated for testing a multimodal RAG pipeline. "
-              "All companies, sites and figures are invented.", caption),
+    Paragraph(
+        "This is a fictional document generated for testing a multimodal RAG pipeline. "
+        "All companies, sites and figures are invented.",
+        caption,
+    ),
     Spacer(1, 12),
     Paragraph("1. Executive summary", h1),
-    P(f"{COMPANY} delivered its strongest year to date in FY2025. Net generation rose to 2,028 GWh, "
-      "up 14.8% on FY2024, driven by the commissioning of the Saltmarsh solar farm in the Southern "
-      "region and higher availability at the Kestrel Bay offshore wind site."),
-    P("Revenue grew in every quarter, reaching $206.2 million for the year, while operating margin "
-      "expanded from 27.6% in Q1 to 34.1% in Q4. The improvement came mainly from lower curtailment "
-      "and the shift of evening demand onto battery storage, which reduced spot-market purchases."),
-    P("Installed capacity reached 1,180 MW across four regions. Safety performance remained strong, "
-      "with a lost-time injury frequency rate of 0.4 per million hours worked, the lowest in the "
-      "company's history."),
+    P(
+        f"{COMPANY} delivered its strongest year to date in FY2025. Net generation rose to 2,028 GWh, "
+        "up 14.8% on FY2024, driven by the commissioning of the Saltmarsh solar farm in the Southern "
+        "region and higher availability at the Kestrel Bay offshore wind site."
+    ),
+    P(
+        "Revenue grew in every quarter, reaching $206.2 million for the year, while operating margin "
+        "expanded from 27.6% in Q1 to 34.1% in Q4. The improvement came mainly from lower curtailment "
+        "and the shift of evening demand onto battery storage, which reduced spot-market purchases."
+    ),
+    P(
+        "Installed capacity reached 1,180 MW across four regions. Safety performance remained strong, "
+        "with a lost-time injury frequency rate of 0.4 per million hours worked, the lowest in the "
+        "company's history."
+    ),
     Image(gen_chart, width=15 * cm, height=7.3 * cm),
-    Paragraph("Figure 1: Monthly net generation in GWh, FY2024 versus FY2025. Output peaks in July "
-              "at 204 GWh and is lowest in January.", caption),
+    Paragraph(
+        "Figure 1: Monthly net generation in GWh, FY2024 versus FY2025. Output peaks in July "
+        "at 204 GWh and is lowest in January.",
+        caption,
+    ),
     PageBreak(),
     Paragraph("2. Financial results", h1),
-    P("Quarterly results are summarised in Table 1. Revenue increased from $42.1 million in Q1 to "
-      "$61.0 million in Q4. Operating costs grew more slowly than revenue because maintenance "
-      "contracts were renegotiated in the second quarter."),
+    P(
+        "Quarterly results are summarised in Table 1. Revenue increased from $42.1 million in Q1 to "
+        "$61.0 million in Q4. Operating costs grew more slowly than revenue because maintenance "
+        "contracts were renegotiated in the second quarter."
+    ),
     grid_table(fin_rows, [2.4 * cm, 2.8 * cm, 3.6 * cm, 3.7 * cm, 2.2 * cm]),
     Paragraph("Table 1: Quarterly financial results for FY2025.", caption),
     Spacer(1, 10),
-    P("Q3 was the strongest quarter for profit growth. Operating profit rose to $17.7 million as "
-      "summer output peaked and the Ambervale battery system shifted 310 MWh per day of solar "
-      "generation into the evening peak, when wholesale prices are highest."),
-    P("Capital expenditure for the year was $88.4 million, of which $61.2 million went to the "
-      "Saltmarsh build-out and the remainder to grid connection upgrades in the Coastal region. "
-      "Net debt at year end stood at $312 million, or 2.1 times EBITDA."),
+    P(
+        "Q3 was the strongest quarter for profit growth. Operating profit rose to $17.7 million as "
+        "summer output peaked and the Ambervale battery system shifted 310 MWh per day of solar "
+        "generation into the evening peak, when wholesale prices are highest."
+    ),
+    P(
+        "Capital expenditure for the year was $88.4 million, of which $61.2 million went to the "
+        "Saltmarsh build-out and the remainder to grid connection upgrades in the Coastal region. "
+        "Net debt at year end stood at $312 million, or 2.1 times EBITDA."
+    ),
     Paragraph("2.1 Cost drivers", h2),
-    P("The largest cost categories were operations and maintenance (41% of operating costs), "
-      "network charges (23%), staff (19%) and insurance (9%). Insurance premiums rose 14% after "
-      "a regional storm season, partly offset by lower turbine gearbox replacements."),
+    P(
+        "The largest cost categories were operations and maintenance (41% of operating costs), "
+        "network charges (23%), staff (19%) and insurance (9%). Insurance premiums rose 14% after "
+        "a regional storm season, partly offset by lower turbine gearbox replacements."
+    ),
     PageBreak(),
     Paragraph("3. Generation portfolio", h1),
-    P("Figure 2 compares installed capacity by region. The Northern region remains the largest, "
-      "with 420 MW, while the Southern region grew fastest, up 23% following the Saltmarsh "
-      "commissioning."),
+    P(
+        "Figure 2 compares installed capacity by region. The Northern region remains the largest, "
+        "with 420 MW, while the Southern region grew fastest, up 23% following the Saltmarsh "
+        "commissioning."
+    ),
     bar,
     Paragraph("Figure 2: Installed capacity by region in MW, 2024 versus 2025.", caption),
     Spacer(1, 10),
-    P("Table 2 lists the six operating sites. Kestrel Bay is the largest single site at 310 MW; "
-      "Linden Falls, a run-of-river hydro scheme, is the oldest asset in the portfolio."),
+    P(
+        "Table 2 lists the six operating sites. Kestrel Bay is the largest single site at 310 MW; "
+        "Linden Falls, a run-of-river hydro scheme, is the oldest asset in the portfolio."
+    ),
     grid_table(site_rows, [3.4 * cm, 2.6 * cm, 3.4 * cm, 2.8 * cm, 2.8 * cm]),
     Paragraph("Table 2: Operating sites as of 31 December 2025.", caption),
     PageBreak(),
     Paragraph("4. Energy mix and system design", h1),
-    P("Solar was the largest source of generation in FY2025 at 58%, followed by wind at 27%. "
-      "Battery discharge contributed 11% of delivered energy, up from 6% the previous year, "
-      "and hydro provided the remaining 4%."),
+    P(
+        "Solar was the largest source of generation in FY2025 at 58%, followed by wind at 27%. "
+        "Battery discharge contributed 11% of delivered energy, up from 6% the previous year, "
+        "and hydro provided the remaining 4%."
+    ),
     Image(mix_chart, width=9 * cm, height=7.3 * cm),
     Paragraph("Figure 3: FY2025 generation mix by source.", caption),
     Spacer(1, 10),
-    P("Energy flows from the generation sites through inverters and substations, where it is "
-      "either stored in battery systems or exported directly to the regional grid. Battery "
-      "dispatch is scheduled day-ahead using price and weather forecasts."),
+    P(
+        "Energy flows from the generation sites through inverters and substations, where it is "
+        "either stored in battery systems or exported directly to the regional grid. Battery "
+        "dispatch is scheduled day-ahead using price and weather forecasts."
+    ),
     flow,
     Paragraph("Figure 4: Simplified energy flow from generation to the regional grid.", caption),
     PageBreak(),
     Paragraph("5. Outlook and risks", h1),
-    P("For FY2026 the company expects net generation of 2,150 to 2,250 GWh and capital expenditure "
-      "of around $95 million, mainly for a 100 MW battery extension at Ambervale and repowering "
-      "of the oldest Pinecrest turbines."),
+    P(
+        "For FY2026 the company expects net generation of 2,150 to 2,250 GWh and capital expenditure "
+        "of around $95 million, mainly for a 100 MW battery extension at Ambervale and repowering "
+        "of the oldest Pinecrest turbines."
+    ),
     P("The main risks to this outlook are:"),
-    ListFlowable([
-        ListItem(P("Grid curtailment in the Coastal region if transmission upgrades are delayed beyond Q3 2026.")),
-        ListItem(P("Lower solar yield in a La Nina year, which historically reduces output by 4-6%.")),
-        ListItem(P("Battery cell supply constraints affecting the Ambervale extension timeline.")),
-        ListItem(P("Changes to the regional capacity market rules expected to be finalised in mid-2026.")),
-    ], bulletType="bullet"),
-    P("The board has approved a dividend of 8.5 cents per share, a payout ratio of 45% of net "
-      "profit, and reaffirmed the target of reaching 1,500 MW of installed capacity by 2028."),
+    ListFlowable(
+        [
+            ListItem(
+                P(
+                    "Grid curtailment in the Coastal region if transmission upgrades are delayed beyond Q3 2026."
+                )
+            ),
+            ListItem(P("Lower solar yield in a La Nina year, which historically reduces output by 4-6%.")),
+            ListItem(P("Battery cell supply constraints affecting the Ambervale extension timeline.")),
+            ListItem(
+                P("Changes to the regional capacity market rules expected to be finalised in mid-2026.")
+            ),
+        ],
+        bulletType="bullet",
+    ),
+    P(
+        "The board has approved a dividend of 8.5 cents per share, a payout ratio of 45% of net "
+        "profit, and reaffirmed the target of reaching 1,500 MW of installed capacity by 2028."
+    ),
 ]
 
-doc = SimpleDocTemplate(OUT, pagesize=A4, leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2.2 * cm,
-                        bottomMargin=2 * cm, title=f"{COMPANY} FY2025 Annual Operations Report (sample)")
+doc = SimpleDocTemplate(
+    OUT,
+    pagesize=A4,
+    leftMargin=2 * cm,
+    rightMargin=2 * cm,
+    topMargin=2.2 * cm,
+    bottomMargin=2 * cm,
+    title=f"{COMPANY} FY2025 Annual Operations Report (sample)",
+)
 doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
 print("wrote", OUT)
