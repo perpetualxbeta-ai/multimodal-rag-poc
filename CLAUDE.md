@@ -21,61 +21,61 @@ Query ──► embed query ──► retrieve (text + table + image) ──► 
 ```
 
 ### Pipeline stages
-1. **Ingestion** (`src/ingestion/`)
+1. **Ingestion** (`src/extractor.py`)
    - `pymupdf` (fitz) is the primary parser: page text, image extraction, and rendering figure regions to PNG (`page.get_pixmap(clip=bbox, dpi=...)`).
    - `unstructured[pdf]` handles layout-aware partitioning, mainly for table detection (`strategy="hi_res"`, `infer_table_structure=True`). Convert table HTML to Markdown.
    - `pypdf` is used for lightweight metadata and page-count checks, and as a fallback text extractor.
    - Text is chunked by token or character count with overlap. Each chunk keeps provenance: `doc_id`, `page`, `bbox`, `source_path`.
    - Rendered figures are saved to `data/processed/images/{doc_id}/p{page}_fig{n}.png`.
-2. **Embeddings** (`src/embeddings/`)
+2. **Embeddings** (`src/embedder.py`)
    - **CLIP (local, default):** `sentence-transformers` `clip-ViT-B-32` (or ViT-L/14) embeds images and text into a **shared space**, which enables text→image retrieval.
    - **Caption-then-embed (optional):** a vision LLM (Gemini or a local model via litellm) describes each figure, and a text embedder embeds the caption. Store the caption in the payload either way, because it also helps the generator.
    - Text and table chunks use a text embedder: a local `sentence-transformers` model by default, or Gemini embeddings via `litellm.aembedding` (e.g. `gemini/gemini-embedding-001`).
-3. **Vector store** (`src/vectorstore/`)
+3. **Vector store** (`src/store.py`)
    - `qdrant-client` supports three modes, selected by config: `:memory:` (tests), local path (`QdrantClient(path="data/qdrant")`), or Docker server (`http://localhost:6333`).
-   - Use one collection with **named vectors** (e.g. `text`, `clip`) or separate collections per modality. Keep the choice in config. Vector dimensions must come from the embedder, never be hard-coded.
-   - Payload schema: `chunk_id, doc_id, modality (text|table|image), page, bbox, content (text/markdown/caption), image_path, source_path`.
-4. **Retrieval** (`src/retrieval/`): query each modality, merge by score (normalise scores per modality first), apply an optional simple rerank, and return the top-k with provenance.
-5. **Generation** (`src/llm/`): build a prompt with retrieved text and tables plus images (base64 `image_url` content parts) and call `litellm.acompletion`. The answer must cite `doc_id`/`page`.
+   - One collection with **named vectors** `text` and `clip` (the latter only when the image strategy is CLIP or BOTH). Vector dimensions come from the embedder, never hard-coded.
+   - Payload schema: `chunk_id, chunk_type (text|table|image), page_number, content (text/markdown), summary (image caption), image_path`, plus any extractor metadata (`doc_id`, `bbox`, `source_path`).
+4. **Retrieval** (`VectorStoreManager.search` in `src/store.py`): query each vector space, merge with Reciprocal Rank Fusion (raw text and CLIP scores are not comparable), and return the top-k with provenance and raw scores.
+5. **Generation** (`src/llm.py`, planned): build a prompt with retrieved text and tables plus images (base64 `image_url` content parts) and call `litellm.acompletion`. The answer must cite `doc_id`/`page`.
 
-## Repository Layout (target)
+## Repository Layout
+
+A flat `src/` package. Modules are imported as `from src.embedder import ...` and use relative imports internally (`from .models import Chunk`).
 
 ```
-src/mmrag/
+src/
   __init__.py
-  config.py            # pydantic-settings; loads .env + config.yaml
-  logging_setup.py     # central logging config
-  models.py            # Chunk dataclasses / pydantic models (TextChunk, TableChunk, ImageChunk)
-  ingestion/
-    pdf_loader.py      # pymupdf + pypdf
-    tables.py          # unstructured table extraction -> markdown
-    figures.py         # figure detection + rendering to PNG
-    chunking.py
-  embeddings/
-    base.py            # Embedder Protocol
-    clip_embedder.py   # sentence-transformers CLIP (MPS aware)
-    api_embedder.py    # Gemini text embeddings via litellm.aembedding
-    captioner.py       # vision-LLM figure captions
-  vectorstore/
-    qdrant_store.py
-  retrieval/
-    retriever.py
-  llm/
-    router.py          # litellm wrapper, model aliases, fallbacks
-    prompts.py
-  pipeline.py          # ingest() / query() orchestration
-  cli.py               # `python -m mmrag ingest|query`
+  models.py        # Chunk dataclass + ChunkType; Chunk.from_any() normalises extractor output   [done]
+  extractor.py     # PDF -> text chunks, markdown tables, rendered figure PNGs                    [done]
+  embedder.py      # text embedders (MiniLM / litellm), ClipEmbedder, VisionSummarizer,
+                   # MultimodalEmbedder with ImageStrategy (caption | clip | both)                [done]
+  store.py         # VectorStoreManager: Qdrant collection, index_chunks(), search()              [done]
+  llm.py           # litellm wrapper: model aliases, fallbacks, answer generation                 [planned]
+  pipeline.py      # ingest() / query() orchestration                                             [planned]
+  config.py        # pydantic-settings; loads .env + config.yaml                                  [planned]
+  logging_setup.py # central logging config                                                       [planned]
+  cli.py           # `python -m src.cli ingest|query`                                             [planned]
 tests/
-data/raw/              # input PDFs (gitignored)
-data/processed/        # rendered images, caches (gitignored)
-config.yaml
-.env.example
-pyproject.toml
+  test_store.py    # embedder + store tests with fake embedders and in-memory Qdrant
+data/raw/          # input PDFs (gitignored)
+data/processed/    # rendered images, caches (gitignored)
+requirements.txt
+pytest.ini         # asyncio_mode = auto
+config.yaml        # planned
+.env.example       # planned
 ```
+
+Keep new modules flat in `src/` unless one grows past roughly 400 lines; then split it into a subpackage and update this section.
+
+### Key interfaces
+- `Chunk` (`src/models.py`): `chunk_type`, `content`, `page_number`, `image_path`, `chunk_id`, `metadata`. `point_id` is a deterministic UUID, so re-indexing overwrites rather than duplicates. The extractor may return dicts or objects; `Chunk.from_any` maps common field-name aliases.
+- `TextEmbedder` Protocol (`src/embedder.py`): `dimension` property + `async embed(texts)`. New embedding backends implement this.
+- `MultimodalEmbedder.embed_chunks()` / `embed_query()` return named vectors keyed `text` / `clip`.
+- `VectorStoreManager` (`src/store.py`): `in_memory()`, `from_url()`, `async index_chunks(chunks)`, `async search(query_text, top_k=5, chunk_types=..., page_numbers=...)`.
 
 ## LLM Router (`litellm`)
 
-All LLM and embedding API calls go through `src/mmrag/llm/router.py`. Never call provider SDKs directly.
+All LLM and embedding API calls go through `litellm` (`src/embedder.py` today, `src/llm.py` for generation). Never call provider SDKs directly.
 
 | Alias | litellm model string (example) | Notes |
 |---|---|---|
@@ -98,7 +98,7 @@ All LLM and embedding API calls go through `src/mmrag/llm/router.py`. Never call
 - **Errors:** raise specific exceptions. A single bad page or figure must not abort a whole document: log a warning and continue.
 - **Config:** use `pydantic-settings`. Secrets come only from `.env` (gitignored). Commit `.env.example` with placeholder keys.
 - **Formatting/linting:** `ruff format`, `ruff check`, `mypy --strict`. Docstrings use Google style on public functions.
-- **Tests:** `pytest` + `pytest-asyncio`. Use Qdrant `:memory:` and mock litellm in unit tests. Keep one small sample PDF in `tests/fixtures/`.
+- **Tests:** `pytest` + `pytest-asyncio` (`asyncio_mode = auto`). Use Qdrant `:memory:` and fake embedders/summarizers (see `tests/test_store.py`); unit tests must not download models or call APIs. Keep one small sample PDF in `tests/fixtures/`.
 
 ## Tech Stack
 
@@ -106,7 +106,7 @@ All LLM and embedding API calls go through `src/mmrag/llm/router.py`. Never call
 - **Vector storage:** `qdrant-client` (in-memory, local path, or Docker)
 - **Embeddings:** `sentence-transformers`, `torch`, `pillow`
 - **LLM integration:** `litellm`
-- **Support:** `pydantic`, `pydantic-settings`, `python-dotenv`, `tenacity` (retries), `typer` (CLI), `pytest`, `pytest-asyncio`, `ruff`, `mypy`
+- **Support:** `pytest`, `pytest-asyncio`, `ruff`, `mypy`; planned: `pydantic-settings`, `python-dotenv`, `typer` (CLI)
 
 ## Apple Silicon (macOS, M-series)
 
@@ -130,15 +130,16 @@ All LLM and embedding API calls go through `src/mmrag/llm/router.py`. Never call
 ```bash
 # setup
 python3.11 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -r requirements.txt
 cp .env.example .env   # then add GEMINI_API_KEY
 
 # run
-python -m mmrag ingest data/raw/sample.pdf
-python -m mmrag query "What does Figure 3 show about latency?" --llm gemini
+# (planned CLI)
+python -m src.cli ingest data/raw/sample.pdf
+python -m src.cli query "What does Figure 3 show about latency?" --llm gemini
 
 # quality
-ruff format . && ruff check . && mypy src && pytest -q
+ruff format --line-length 110 src tests && ruff check --line-length 110 src tests && mypy --strict --ignore-missing-imports src && pytest -q
 ```
 
 ## Working Rules for Claude
@@ -147,4 +148,4 @@ ruff format . && ruff check . && mypy src && pytest -q
 - Do not hard-code model names, embedding dimensions, file paths or API keys.
 - Keep each change small and runnable. Update the tests and this file's layout section whenever you add a module.
 - Do not commit anything under `data/`, `.env`, model caches or Qdrant storage.
-- When adding a dependency, add it to `pyproject.toml` with a lower-bound version and say why in the PR or commit message.
+- When adding a dependency, add it to `requirements.txt` with a lower-bound version and say why in the PR or commit message.
