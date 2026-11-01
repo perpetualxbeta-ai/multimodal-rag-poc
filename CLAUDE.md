@@ -29,8 +29,8 @@ Query ──► embed query ──► retrieve (text + table + image) ──► 
    - Rendered figures are saved to `data/processed/images/{doc_id}/p{page}_fig{n}.png`.
 2. **Embeddings** (`src/embeddings/`)
    - **CLIP (local, default):** `sentence-transformers` `clip-ViT-B-32` (or ViT-L/14) embeds images and text into a **shared space**, which enables text→image retrieval.
-   - **OpenAI (API):** OpenAI's embedding endpoint is **text-only**. The "OpenAI image" path is therefore *caption-then-embed*: a vision LLM (GPT-4o via litellm) describes the figure, and `text-embedding-3-small/large` embeds the caption. Store the caption in the payload either way, because it also helps the generator.
-   - Text and table chunks use a text embedder (`sentence-transformers` model or OpenAI `text-embedding-3-*`).
+   - **Caption-then-embed (optional):** a vision LLM (Gemini or a local model via litellm) describes each figure, and a text embedder embeds the caption. Store the caption in the payload either way, because it also helps the generator.
+   - Text and table chunks use a text embedder: a local `sentence-transformers` model by default, or Gemini embeddings via `litellm.aembedding` (e.g. `gemini/gemini-embedding-001`).
 3. **Vector store** (`src/vectorstore/`)
    - `qdrant-client` supports three modes, selected by config: `:memory:` (tests), local path (`QdrantClient(path="data/qdrant")`), or Docker server (`http://localhost:6333`).
    - Use one collection with **named vectors** (e.g. `text`, `clip`) or separate collections per modality. Keep the choice in config. Vector dimensions must come from the embedder, never be hard-coded.
@@ -54,7 +54,7 @@ src/mmrag/
   embeddings/
     base.py            # Embedder Protocol
     clip_embedder.py   # sentence-transformers CLIP (MPS aware)
-    openai_embedder.py # text-embedding-3-* via litellm.aembedding
+    api_embedder.py    # Gemini text embeddings via litellm.aembedding
     captioner.py       # vision-LLM figure captions
   vectorstore/
     qdrant_store.py
@@ -91,7 +91,7 @@ All LLM and embedding API calls go through `src/mmrag/llm/router.py`. Never call
 
 - **Python 3.11+.** Use modern typing: `list[str]`, `X | None`, `typing.Protocol`, `Self`.
 - **Strict type hints** on every function, method and module-level variable. Code must pass `mypy --strict`. Avoid `Any` unless it is justified in a comment.
-- **Async where it helps:** network-bound work (LLM calls, captioning, OpenAI embeddings, Qdrant server calls via `AsyncQdrantClient`) is `async`. Use `asyncio.gather` with a bounded `asyncio.Semaphore` for concurrency. CPU/GPU-bound work (PDF parsing, local CLIP) stays sync, and async callers wrap it with `asyncio.to_thread`.
+- **Async where it helps:** network-bound work (LLM calls, captioning, API embeddings, Qdrant server calls via `AsyncQdrantClient`) is `async`. Use `asyncio.gather` with a bounded `asyncio.Semaphore` for concurrency. CPU/GPU-bound work (PDF parsing, local CLIP) stays sync, and async callers wrap it with `asyncio.to_thread`.
 - **Modular functions:** small, pure-where-possible functions in `src/`. No business logic in `cli.py` or notebooks. Depend on Protocols (`Embedder`, `VectorStore`, `LLMClient`), not concrete classes.
 - **Explicit logging:** use `logging.getLogger(__name__)` in every module and configure it once in `logging_setup.py`. Never use `print()` in library code. Log stage boundaries, counts (pages, chunks, figures, vectors), timings and fallbacks. Use structured context (`doc_id`, `page`) in messages.
 - **Data models:** pydantic v2 models or `@dataclass(slots=True, frozen=True)` for chunks and results.
@@ -131,7 +131,7 @@ All LLM and embedding API calls go through `src/mmrag/llm/router.py`. Never call
 # setup
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env   # then add OPENAI_API_KEY / GEMINI_API_KEY
+cp .env.example .env   # then add GEMINI_API_KEY
 
 # run
 python -m mmrag ingest data/raw/sample.pdf
