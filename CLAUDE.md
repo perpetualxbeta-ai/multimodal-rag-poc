@@ -22,11 +22,13 @@ Query ──► embed query ──► retrieve (text + table + image) ──► 
 
 ### Pipeline stages
 1. **Ingestion** (`src/extractor.py`)
-   - `pymupdf` (fitz) is the primary parser: page text, image extraction, and rendering figure regions to PNG (`page.get_pixmap(clip=bbox, dpi=...)`).
-   - `unstructured[pdf]` handles layout-aware partitioning, mainly for table detection (`strategy="hi_res"`, `infer_table_structure=True`). Convert table HTML to Markdown.
-   - `pypdf` is used for lightweight metadata and page-count checks, and as a fallback text extractor.
-   - Text is chunked by token or character count with overlap. Each chunk keeps provenance: `doc_id`, `page`, `bbox`, `source_path`.
-   - Rendered figures are saved to `data/processed/images/{doc_id}/p{page}_fig{n}.png`.
+   - `pymupdf` does everything by default, with no system packages needed:
+     - **Text:** page text blocks outside tables and figures are split into overlapping chunks (`chunk_size`/`chunk_overlap`, paragraph- then sentence-aware).
+     - **Tables:** `page.find_tables()` → `Table.to_markdown()`.
+     - **Figures:** raster images (`page.get_image_info`) plus vector-graphic clusters such as charts (`page.cluster_drawings`), rendered with `page.get_pixmap(clip=bbox, dpi=...)`. Small items (logos, icons), full-page backgrounds and table borders are filtered out. A nearby "Figure N ..." caption becomes the image chunk's `content`.
+   - `table_backend="unstructured"` swaps in `unstructured[pdf]` hi-res table detection (HTML → Markdown). It needs poppler and tesseract, so it is optional.
+   - Scanned pages (no text layer) are logged and skipped; OCR is not implemented yet.
+   - Rendered figures are saved to `data/processed/images/{doc_id}/p{page}_fig{n}.png`. `doc_id` is the file stem plus a content hash, so chunk IDs stay stable across runs.
 2. **Embeddings** (`src/embedder.py`)
    - **CLIP (local, default):** `sentence-transformers` `clip-ViT-B-32` (or ViT-L/14) embeds images and text into a **shared space**, which enables text→image retrieval.
    - **Caption-then-embed (optional):** a vision LLM (Gemini or a local model via litellm) describes each figure, and a text embedder embeds the caption. Store the caption in the payload either way, because it also helps the generator.
@@ -57,6 +59,7 @@ src/
   cli.py           # `python -m src.cli ingest|query`                                             [planned]
 tests/
   test_store.py    # embedder + store tests with fake embedders and in-memory Qdrant
+  test_extractor.py # builds a sample PDF on the fly (text, table, raster + vector figures)
 data/raw/          # input PDFs (gitignored)
 data/processed/    # rendered images, caches (gitignored)
 requirements.txt
@@ -68,6 +71,7 @@ config.yaml        # planned
 Keep new modules flat in `src/` unless one grows past roughly 400 lines; then split it into a subpackage and update this section.
 
 ### Key interfaces
+- `extract_pdf(path, ExtractorConfig(...)) -> list[Chunk]` (`src/extractor.py`); `extract_pdf_async` and `extract_many` wrap it for async callers. Every chunk's metadata holds `doc_id` and `source_path`; tables and figures also hold `bbox`.
 - `Chunk` (`src/models.py`): `chunk_type`, `content`, `page_number`, `image_path`, `chunk_id`, `metadata`. `point_id` is a deterministic UUID, so re-indexing overwrites rather than duplicates. The extractor may return dicts or objects; `Chunk.from_any` maps common field-name aliases.
 - `TextEmbedder` Protocol (`src/embedder.py`): `dimension` property + `async embed(texts)`. New embedding backends implement this.
 - `MultimodalEmbedder.embed_chunks()` / `embed_query()` return named vectors keyed `text` / `clip`.
@@ -98,7 +102,7 @@ All LLM and embedding API calls go through `litellm` (`src/embedder.py` today, `
 - **Errors:** raise specific exceptions. A single bad page or figure must not abort a whole document: log a warning and continue.
 - **Config:** use `pydantic-settings`. Secrets come only from `.env` (gitignored). Commit `.env.example` with placeholder keys.
 - **Formatting/linting:** `ruff format`, `ruff check`, `mypy --strict`. Docstrings use Google style on public functions.
-- **Tests:** `pytest` + `pytest-asyncio` (`asyncio_mode = auto`). Use Qdrant `:memory:` and fake embedders/summarizers (see `tests/test_store.py`); unit tests must not download models or call APIs. Keep one small sample PDF in `tests/fixtures/`.
+- **Tests:** `pytest` + `pytest-asyncio` (`asyncio_mode = auto`). Use Qdrant `:memory:` and fake embedders/summarizers (see `tests/test_store.py`); unit tests must not download models or call APIs. Generate test PDFs with pymupdf inside the test (see `tests/test_extractor.py`) rather than committing binary fixtures.
 
 ## Tech Stack
 
@@ -122,7 +126,7 @@ All LLM and embedding API calls go through `litellm` (`src/embedder.py` today, `
   Pass it to `SentenceTransformer(model_name, device=get_device())`.
 - Set `PYTORCH_ENABLE_MPS_FALLBACK=1` so unsupported ops fall back to CPU instead of crashing.
 - Use native arm64 Python (not Rosetta). Check with `python -c "import platform; print(platform.machine())"`, which should print `arm64`.
-- `unstructured[pdf]` hi-res mode needs system packages: `brew install poppler tesseract libmagic`. If hi-res is too slow or heavy, fall back to `strategy="fast"` and to pymupdf's `page.find_tables()`.
+- The default pymupdf extractor needs no system packages. The optional `unstructured[pdf]` hi-res backend needs `brew install poppler tesseract libmagic`, which requires admin rights on the Mac.
 - Qdrant via Docker: `docker run -p 6333:6333 -v $(pwd)/data/qdrant_storage:/qdrant/storage qdrant/qdrant`.
 
 ## Common Commands
@@ -134,6 +138,9 @@ pip install -r requirements.txt
 cp .env.example .env   # then add GEMINI_API_KEY
 
 # run
+# extract a PDF and print a summary of its chunks
+python -m src.extractor data/raw/sample.pdf
+
 # (planned CLI)
 python -m src.cli ingest data/raw/sample.pdf
 python -m src.cli query "What does Figure 3 show about latency?" --llm gemini
