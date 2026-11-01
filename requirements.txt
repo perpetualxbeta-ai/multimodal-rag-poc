@@ -1,0 +1,15 @@
+pypdf>=5.0
+pymupdf>=1.24
+unstructured[pdf]>=0.16
+qdrant-client>=1.12
+sentence-transformers>=3.0
+torch>=2.3
+pillow>=10.0
+litellm>=1.50
+
+# dev
+pytest>=8.0
+pytest-asyncio>=0.24
+mypy>=1.11
+ruff>=0.6
+types-Pillow
