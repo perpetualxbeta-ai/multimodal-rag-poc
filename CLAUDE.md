@@ -79,7 +79,6 @@ All LLM and embedding API calls go through `src/mmrag/llm/router.py`. Never call
 
 | Alias | litellm model string (example) | Notes |
 |---|---|---|
-| `openai` | `gpt-4o` | Needs `OPENAI_API_KEY`. Vision-capable. |
 | `gemini` | `gemini/gemini-2.5-flash` | Free tier via Google AI Studio. Needs `GEMINI_API_KEY`. Vision-capable. Check the current model names in AI Studio, because they change. |
 | `local` | `ollama/llama3.2-vision` (or `ollama/qwen2.5vl`) | Needs `ollama serve` running. `api_base=http://localhost:11434`. |
 
