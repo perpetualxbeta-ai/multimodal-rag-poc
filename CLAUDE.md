@@ -38,8 +38,8 @@ Query ──► embed query ──► retrieve (text + table + image) ──► 
    - `qdrant-client` supports three modes, selected by config: `:memory:` (tests), local path (`QdrantClient(path="data/qdrant")`), or Docker server (`http://localhost:6333`).
    - One collection with **named vectors** `text` and `clip` (the latter only when the image strategy is CLIP or BOTH). Vector dimensions come from the embedder, never hard-coded.
    - Payload schema: `chunk_id, chunk_type (text|table|image), page_number, content (text/markdown), summary (image caption), image_path`, plus any extractor metadata (`doc_id`, `bbox`, `source_path`).
-4. **Retrieval** (`VectorStoreManager.search` in `src/store.py`): query each vector space, merge with Reciprocal Rank Fusion (raw text and CLIP scores are not comparable), and return the top-k with provenance and raw scores.
-5. **Generation** (`src/llm.py`, planned): build a prompt with retrieved text and tables plus images (base64 `image_url` content parts) and call `litellm.acompletion`. The answer must cite `doc_id`/`page`.
+4. **Retrieval** (`src/retriever.py`): `VectorStoreManager.search` queries each vector space and merges them with Reciprocal Rank Fusion (raw text and CLIP scores are not comparable). `Retriever` then optionally re-ranks (`KeywordReranker`, dependency-free; `CrossEncoderReranker`, sentence-transformers), drops near-duplicate chunks, enforces `max_images` and a `max_context_chars` budget, skips images missing on disk, and returns a `RetrievedContext` with text/table items separate from image items. Every item gets a citation label `S1`, `S2`, ...
+5. **Generation** (`src/generator.py`): `MultimodalGenerator` sends a system prompt (grounding and citation rules) plus one user turn: labelled text sources, then each figure as a label/caption text part followed by a base64 `image_url` part (downscaled to `max_image_side`), then the question. It calls `litellm.acompletion` with retries on rate limits and timeouts, and falls back through `fallback_models`. Models litellm marks as non-vision get captions only (`send_images` overrides). Returns a `GenerationResult` with the answer, cited items (parsed from `[S1]`), token usage, cost (litellm price table, `None` if unknown), LLM/total/retrieval latency and attempt count. An empty context skips the LLM call.
 
 ## Repository Layout
 
@@ -53,7 +53,8 @@ src/
   embedder.py      # text embedders (MiniLM / litellm), ClipEmbedder, VisionSummarizer,
                    # MultimodalEmbedder with ImageStrategy (caption | clip | both)                [done]
   store.py         # VectorStoreManager: Qdrant collection, index_chunks(), search()              [done]
-  llm.py           # litellm wrapper: model aliases, fallbacks, answer generation                 [planned]
+  retriever.py     # Retriever, RetrievedContext/ContextItem, KeywordReranker, CrossEncoderReranker [done]
+  generator.py     # MultimodalGenerator (litellm vision prompts), GenerationResult, TokenUsage     [done]
   pipeline.py      # ingest() / query() orchestration                                             [planned]
   config.py        # pydantic-settings; loads .env + config.yaml                                  [planned]
   logging_setup.py # central logging config                                                       [planned]
@@ -61,6 +62,7 @@ src/
 tests/
   test_store.py    # embedder + store tests with fake embedders and in-memory Qdrant
   test_extractor.py # builds a sample PDF on the fly (text, table, raster + vector figures)
+  test_rag.py      # retriever + generator; litellm faked or run with mock_response (no network)
 samples/
   halcyon_fy2025_report.pdf # fictional 5-page report: text, 2 tables, raster + vector charts, diagram
 scripts/
@@ -81,14 +83,16 @@ Keep new modules flat in `src/` unless one grows past roughly 400 lines; then sp
 - `TextEmbedder` Protocol (`src/embedder.py`): `dimension` property + `async embed(texts)`. New embedding backends implement this.
 - `MultimodalEmbedder.embed_chunks()` / `embed_query()` return named vectors keyed `text` / `clip`.
 - `VectorStoreManager` (`src/store.py`): `in_memory()`, `from_url()`, `async index_chunks(chunks)`, `async search(query_text, top_k=5, chunk_types=..., page_numbers=...)`.
+- `Retriever(store, top_k, max_images, max_context_chars, reranker)` → `async retrieve(query) -> RetrievedContext` (`.text_items`, `.image_items`, `.image_paths`, `.text_block()`).
+- `MultimodalGenerator(model, fallback_models=...)` → `async generate(question, context) -> GenerationResult` (`.answer`, `.citations`, `.usage`, `.cost_usd`, `.llm_latency_ms`, `.end_to_end_latency_ms`). `build_messages()` exposes the exact prompt for debugging.
 
 ## LLM Router (`litellm`)
 
-All LLM and embedding API calls go through `litellm` (`src/embedder.py` today, `src/llm.py` for generation). Never call provider SDKs directly.
+All LLM and embedding API calls go through `litellm` (`src/embedder.py` for captions and API embeddings, `src/generator.py` for answers). Never call provider SDKs directly.
 
 | Alias | litellm model string (example) | Notes |
 |---|---|---|
-| `gemini` | `gemini/gemini-2.5-flash` | Free tier via Google AI Studio. Needs `GEMINI_API_KEY`. Vision-capable. Check the current model names in AI Studio, because they change. |
+| `gemini` | `gemini/gemini-3.8-flash` | Free tier via Google AI Studio. Needs `GEMINI_API_KEY`. Vision-capable. Google's deprecations page recommends it for new projects; `gemini-2.5-flash` is limited to existing users and the 1.5 models are retired. Check current names in AI Studio, because they change. |
 | `local` | `ollama/llama3.2-vision` (or `ollama/qwen2.5vl`) | Needs `ollama serve` running. `api_base=http://localhost:11434`. |
 
 - Model strings live in `config.yaml`, never in code.

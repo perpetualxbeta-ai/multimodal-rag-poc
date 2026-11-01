@@ -247,7 +247,7 @@ class VisionSummarizer:
     """Generates text summaries of figures with a vision LLM via ``litellm.acompletion``.
 
     Args:
-        model: litellm model string, e.g. ``gemini/gemini-2.5-flash`` or ``ollama/llama3.2-vision``.
+        model: litellm model string, e.g. ``gemini/gemini-3.8-flash`` or ``ollama/llama3.2-vision``.
         prompt: Instruction sent with each image.
         max_concurrency: Parallel requests (keep low for the Gemini free tier).
     """
