@@ -13,3 +13,5 @@ pytest-asyncio>=0.24
 mypy>=1.11
 ruff>=0.6
 types-Pillow
+reportlab>=4.0   # scripts/make_sample_pdf.py only
+matplotlib>=3.8  # scripts/make_sample_pdf.py only

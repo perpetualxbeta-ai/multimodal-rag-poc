@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 BBox = tuple[float, float, float, float]
 
 _CAPTION_RE = re.compile(r"^\s*(fig(?:ure)?\.?|chart|graph|diagram|exhibit)\s*\d*", re.IGNORECASE)
+# A labelled caption such as "Figure 2:", "Fig. 3." or "Chart 1 -" (vs body text "Figure 2 shows ...").
+_STRONG_CAPTION_RE = re.compile(
+    r"^\s*(fig(?:ure)?\.?|chart|graph|diagram|exhibit)\s*\d+[a-z]?\s*[:.\-\u2013\u2014]", re.IGNORECASE
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -48,8 +52,12 @@ class ExtractorConfig:
         chunk_overlap: Characters of overlap between consecutive chunks on a page.
         image_dpi: Resolution for rendered figures.
         min_figure_size: Minimum width and height (PDF points, 72 per inch) for a figure.
-            Filters out logos, icons and decorative rules.
+        min_figure_area: Minimum area (square points) for a figure. Together with
+            ``min_figure_size`` this filters out logos, icons and decorative rules while keeping
+            wide, short diagrams.
         figure_padding: Points added around a figure's bounding box when rendering.
+        figure_merge_gap: Figure parts closer than this (points) are merged into one figure, e.g.
+            the separate boxes of a flow diagram or an image with a vector overlay.
         extract_tables: Detect tables and emit them as Markdown chunks.
         extract_figures: Detect figures and render them to PNG.
         include_vector_figures: Also treat clusters of vector drawings (e.g. charts) as figures.
@@ -60,8 +68,10 @@ class ExtractorConfig:
     chunk_size: int = 1200
     chunk_overlap: int = 200
     image_dpi: int = 150
-    min_figure_size: float = 60.0
+    min_figure_size: float = 30.0
+    min_figure_area: float = 3600.0
     figure_padding: float = 4.0
+    figure_merge_gap: float = 24.0
     extract_tables: bool = True
     extract_figures: bool = True
     include_vector_figures: bool = True
@@ -210,7 +220,7 @@ def _page_chunks(
     blocks = _text_blocks(page)
     figure_boxes: list[BBox] = []
     if cfg.extract_figures:
-        figure_boxes = _figure_boxes(page, table_boxes, cfg)
+        figure_boxes = _figure_boxes(page, table_boxes, blocks, cfg)
         if figure_boxes:
             image_dir.mkdir(parents=True, exist_ok=True)
         page_rect = page.rect
@@ -270,46 +280,117 @@ def _text_blocks(page: pymupdf.Page) -> list[tuple[BBox, str]]:
 
 
 def _pymupdf_tables(page: pymupdf.Page) -> list[_Table]:
+    """Detect tables and convert them to Markdown (first row treated as the header).
+
+    Cell text is rebuilt from the words inside each cell box, because pymupdf's own cell text can
+    drop spaces (seen with bold header rows).
+    """
+    import pymupdf
+
     tables: list[_Table] = []
     for table in page.find_tables().tables:
-        markdown = table.to_markdown().strip()
-        if markdown and table.row_count >= 2:
-            x0, y0, x1, y1 = table.bbox
-            tables.append(_Table((float(x0), float(y0), float(x1), float(y1)), markdown))
+        rows: list[list[str]] = []
+        for row in table.rows:
+            cells = []
+            for cell in row.cells:
+                if cell is None:  # merged cell
+                    cells.append("")
+                    continue
+                words = page.get_text("words", clip=pymupdf.Rect(cell), sort=True)
+                cells.append(" ".join(str(w[4]) for w in words).replace("|", "\\|"))
+            rows.append(cells)
+        rows = [r for r in rows if any(c.strip() for c in r)]
+        if len(rows) < 2:
+            continue
+        width = max(len(r) for r in rows)
+        rows = [r + [""] * (width - len(r)) for r in rows]
+        lines = ["|" + "|".join(rows[0]) + "|", "|" + "|".join(["---"] * width) + "|"]
+        lines += ["|" + "|".join(r) + "|" for r in rows[1:]]
+        x0, y0, x1, y1 = table.bbox
+        tables.append(_Table((float(x0), float(y0), float(x1), float(y1)), "\n".join(lines)))
     return tables
 
 
-def _figure_boxes(page: pymupdf.Page, table_boxes: list[BBox], cfg: ExtractorConfig) -> list[BBox]:
-    """Bounding boxes of raster images and vector-graphic clusters, minus tables and tiny items."""
-    candidates: list[BBox] = []
+def _figure_boxes(
+    page: pymupdf.Page, table_boxes: list[BBox], blocks: list[tuple[BBox, str]], cfg: ExtractorConfig
+) -> list[BBox]:
+    """Bounding boxes of raster images and vector-graphic clusters, minus tables and tiny items.
+
+    Vector charts draw their axis labels and legends as text, which ``cluster_drawings`` does not
+    include, so vector boxes are grown to take in short label text next to them.
+    """
+    candidates: list[tuple[BBox, bool]] = []  # (bbox, is_vector)
     for info in page.get_image_info():
         x0, y0, x1, y1 = info["bbox"]
-        candidates.append((float(x0), float(y0), float(x1), float(y1)))
+        candidates.append(((float(x0), float(y0), float(x1), float(y1)), False))
     if cfg.include_vector_figures:
         for rect in page.cluster_drawings():
-            candidates.append((float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)))
+            candidates.append(((float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)), True))
 
     page_box: BBox = (float(page.rect.x0), float(page.rect.y0), float(page.rect.x1), float(page.rect.y1))
     page_area = _area(page_box)
     kept: list[BBox] = []
-    for box in candidates:
+    for box, is_vector in candidates:
         clipped = _intersection(box, page_box)
         if clipped is None:
             continue
         if (clipped[2] - clipped[0]) < cfg.min_figure_size or (clipped[3] - clipped[1]) < cfg.min_figure_size:
+            continue
+        if _area(clipped) < cfg.min_figure_area:
             continue
         if _area(clipped) > 0.9 * page_area:  # full-page backgrounds / scanned page images
             continue
         # Table borders show up as drawing clusters; drop clusters that are really a table.
         if any(_overlap_frac(t, clipped) > 0.5 or _overlap_frac(clipped, t) > 0.5 for t in table_boxes):
             continue
+        if is_vector:
+            clipped = _grow_with_labels(clipped, blocks, table_boxes, page_box)
         kept.append(clipped)
-    return _merge_boxes(kept)
+    return _merge_boxes(kept, cfg.figure_merge_gap)
 
 
-def _find_caption(box: BBox, blocks: list[tuple[BBox, str]], max_gap: float = 40.0) -> str:
-    """Closest text block just below (preferred) or above a figure that looks like a caption."""
-    best: tuple[float, str] | None = None
+def _grow_with_labels(
+    box: BBox,
+    blocks: list[tuple[BBox, str]],
+    table_boxes: list[BBox],
+    page_box: BBox,
+    margin: float = 24.0,
+    max_label_chars: int = 80,
+) -> BBox:
+    """Expand a vector figure's box to include short text blocks touching it (axis labels, legends).
+
+    Body paragraphs (long blocks), captions and table text are never absorbed.
+    """
+    grown = box
+    for _ in range(2):  # a second pass catches labels next to labels (e.g. axis title beside ticks)
+        changed = False
+        for bbox, text in blocks:
+            if len(text) > max_label_chars or _CAPTION_RE.match(text):
+                continue
+            if any(_overlap_frac(bbox, t) > 0.5 for t in table_boxes):
+                continue
+            if _intersection(bbox, _pad(grown, margin)) is None:
+                continue
+            union = (
+                min(grown[0], bbox[0]),
+                min(grown[1], bbox[1]),
+                max(grown[2], bbox[2]),
+                max(grown[3], bbox[3]),
+            )
+            if union != grown:
+                grown, changed = union, True
+        if not changed:
+            break
+    return _intersection(grown, page_box) or box
+
+
+def _find_caption(box: BBox, blocks: list[tuple[BBox, str]], max_gap: float = 72.0) -> str:
+    """Best caption-like text block just below or above a figure.
+
+    Labelled captions ("Figure 2: ...") beat body text that merely starts with "Figure"; then the
+    closest block wins, with a slight preference for captions below the figure.
+    """
+    best: tuple[int, float, str] | None = None
     for (x0, y0, x1, y1), text in blocks:
         if not _CAPTION_RE.match(text):
             continue
@@ -318,12 +399,13 @@ def _find_caption(box: BBox, blocks: list[tuple[BBox, str]], max_gap: float = 40
         if 0 <= y0 - box[3] <= max_gap:
             gap = y0 - box[3]
         elif 0 <= box[1] - y1 <= max_gap:
-            gap = (box[1] - y1) + 0.5  # slight preference for captions below
+            gap = (box[1] - y1) + 0.5
         else:
             continue
-        if best is None or gap < best[0]:
-            best = (gap, text)
-    return best[1] if best else ""
+        rank = 0 if _STRONG_CAPTION_RE.match(text) else 1
+        if best is None or (rank, gap) < (best[0], best[1]):
+            best = (rank, gap, text)
+    return best[2] if best else ""
 
 
 # --------------------------------------------------------------------------- text chunking
@@ -502,7 +584,7 @@ def _pad(b: BBox, pad: float) -> BBox:
     return (b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad)
 
 
-def _merge_boxes(boxes: list[BBox], gap: float = 6.0) -> list[BBox]:
+def _merge_boxes(boxes: list[BBox], gap: float) -> list[BBox]:
     """Merge boxes that overlap or nearly touch (e.g. an image plus its vector overlay)."""
     merged = list(boxes)
     changed = True

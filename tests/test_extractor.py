@@ -160,3 +160,42 @@ async def test_extract_then_index_and_search(sample_pdf: Path, tmp_path: Path) -
         hits = await store.search("quarter revenue margin", top_k=3, chunk_types=["table"])
         assert hits[0].page_number == 2 and "Q3" in hits[0].content
         assert hits[0].payload["doc_id"] == chunks[0].metadata["doc_id"]
+
+
+def test_vector_labels_wide_diagrams_captions_and_header_spacing(tmp_path: Path) -> None:
+    doc = pymupdf.open()
+    page = doc.new_page()
+    # Body text that starts with "Figure" sits just above the chart; the real caption is further below.
+    page.insert_text((80, 95), "Figure 1 compares capacity by region across the portfolio.", fontsize=10)
+    for k, height in enumerate([60, 90, 120]):
+        page.draw_rect(
+            pymupdf.Rect(130 + k * 60, 260 - height, 170 + k * 60, 260), color=None, fill=(0.9, 0.5, 0.1)
+        )
+    page.draw_line((115, 260), (330, 260))
+    for k, label in enumerate(["North", "Coast", "South"]):
+        page.insert_text((132 + k * 60, 275), label, fontsize=9)  # axis labels drawn as text
+    page.insert_text((150, 335), "Figure 1: Capacity by region.", fontsize=9)
+    # A wide, short flow diagram (40pt tall) must not be filtered as an icon.
+    for k in range(4):
+        page.draw_rect(
+            pymupdf.Rect(80 + k * 110, 400, 170 + k * 110, 440), color=(0, 0, 0), fill=(0.3, 0.6, 0.9)
+        )
+    page.insert_text((80, 460), "Figure 2: Data flow.", fontsize=9)
+    # Table with a bold header whose cell text contains spaces.
+    for i, row in enumerate([["Site name", "Peak output (MW)"], ["Kestrel Bay", "310"]]):
+        for j, cell in enumerate(row):
+            rect = pymupdf.Rect(80 + j * 150, 520 + i * 22, 80 + (j + 1) * 150, 520 + (i + 1) * 22)
+            page.draw_rect(rect, color=(0, 0, 0), width=0.8)
+            page.insert_text((rect.x0 + 5, rect.y1 - 7), cell, fontsize=10, fontname="helv" if i else "hebo")
+    path = tmp_path / "edge.pdf"
+    doc.save(path)
+
+    chunks = extract_pdf(path, ExtractorConfig(output_dir=str(tmp_path / "img")))
+    figs = [c for c in chunks if c.chunk_type is ChunkType.IMAGE]
+    assert [f.content for f in figs] == ["Figure 1: Capacity by region.", "Figure 2: Data flow."]
+    chart_bottom = figs[0].metadata["bbox"][3]
+    assert chart_bottom >= 272  # grew to include the "North/Coast/South" labels below the axis
+    text = " ".join(c.content for c in chunks if c.chunk_type is ChunkType.TEXT)
+    assert "North" not in text and "compares capacity" in text
+    (table,) = [c for c in chunks if c.chunk_type is ChunkType.TABLE]
+    assert table.content.splitlines()[0] == "|Site name|Peak output (MW)|"

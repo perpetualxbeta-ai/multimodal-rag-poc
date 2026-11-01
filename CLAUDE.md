@@ -25,7 +25,8 @@ Query ──► embed query ──► retrieve (text + table + image) ──► 
    - `pymupdf` does everything by default, with no system packages needed:
      - **Text:** page text blocks outside tables and figures are split into overlapping chunks (`chunk_size`/`chunk_overlap`, paragraph- then sentence-aware).
      - **Tables:** `page.find_tables()` → `Table.to_markdown()`.
-     - **Figures:** raster images (`page.get_image_info`) plus vector-graphic clusters such as charts (`page.cluster_drawings`), rendered with `page.get_pixmap(clip=bbox, dpi=...)`. Small items (logos, icons), full-page backgrounds and table borders are filtered out. A nearby "Figure N ..." caption becomes the image chunk's `content`.
+     - **Tables (cell text):** rebuilt from the words inside each cell box, because pymupdf's own cell text can drop spaces in bold header rows.
+     - **Figures:** raster images (`page.get_image_info`) plus vector-graphic clusters such as charts (`page.cluster_drawings`), rendered with `page.get_pixmap(clip=bbox, dpi=...)`. Vector boxes grow to include short nearby label text (axis ticks, legends). Parts closer than `figure_merge_gap` merge into one figure. Small items (logos, icons), full-page backgrounds and table borders are filtered out. The nearest caption becomes the image chunk's `content`; labelled captions ("Figure 2: ...") beat body text that merely starts with "Figure".
    - `table_backend="unstructured"` swaps in `unstructured[pdf]` hi-res table detection (HTML → Markdown). It needs poppler and tesseract, so it is optional.
    - Scanned pages (no text layer) are logged and skipped; OCR is not implemented yet.
    - Rendered figures are saved to `data/processed/images/{doc_id}/p{page}_fig{n}.png`. `doc_id` is the file stem plus a content hash, so chunk IDs stay stable across runs.
@@ -60,6 +61,10 @@ src/
 tests/
   test_store.py    # embedder + store tests with fake embedders and in-memory Qdrant
   test_extractor.py # builds a sample PDF on the fly (text, table, raster + vector figures)
+samples/
+  halcyon_fy2025_report.pdf # fictional 5-page report: text, 2 tables, raster + vector charts, diagram
+scripts/
+  make_sample_pdf.py        # regenerates the sample PDF (reportlab + matplotlib)
 data/raw/          # input PDFs (gitignored)
 data/processed/    # rendered images, caches (gitignored)
 requirements.txt
@@ -139,7 +144,7 @@ cp .env.example .env   # then add GEMINI_API_KEY
 
 # run
 # extract a PDF and print a summary of its chunks
-python -m src.extractor data/raw/sample.pdf
+python -m src.extractor samples/halcyon_fy2025_report.pdf
 
 # (planned CLI)
 python -m src.cli ingest data/raw/sample.pdf
